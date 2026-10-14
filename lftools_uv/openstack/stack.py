@@ -37,6 +37,13 @@ log = logging.getLogger(__name__)
 # Format arguments are the flavour name and the elapsed run time in seconds.
 _PRICING_API_URL = "https://pricing.vexxhost.net/v1/pricing/%s/cost?seconds=%d"
 
+# python-jenkins' get_running_builds() silently treats a node as idle when the
+# node query returns HTTP 500 or when the node disappears mid-query. Both are
+# routine with ephemeral cloud agents, so the build list can come back short
+# without raising. Stacks younger than the longest build-timeout are therefore
+# never safe to reap on the strength of that list alone.
+STALE_MIN_AGE_HOURS = 24
+
 
 def create(
     os_cloud: str, name: str, template_file: str, parameter_file: str, timeout: int = 900, tries: int = 2
@@ -208,7 +215,21 @@ def delete(os_cloud: str, name_or_id: str, force: bool = False, timeout: int = 9
     return None
 
 
-def delete_stale(os_cloud: str, jenkins_servers: list[str]) -> None:
+def _stack_age_hours(stack: Any) -> float | None:
+    """Return the age of a stack in hours, or None if it cannot be determined."""
+    created = getattr(stack, "created_at", None)
+    if not created:
+        return None
+    try:
+        created_dt = datetime.fromisoformat(created)
+    except ValueError:
+        return None
+    if created_dt.tzinfo is None:  # Heat reports UTC
+        created_dt = created_dt.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - created_dt).total_seconds() / 3600
+
+
+def delete_stale(os_cloud: str, jenkins_servers: list[str], min_age_hours: int = STALE_MIN_AGE_HOURS) -> None:
     """Search Jenkins and OpenStack for orphaned stacks and remove them.
 
     An orphaned stack is a stack that is not known in any of the Jenkins
@@ -252,8 +273,14 @@ def delete_stale(os_cloud: str, jenkins_servers: list[str]) -> None:
                 cloud.pprint(stack)
 
             if stack.name not in builds:
-                log.debug("        >>>> Marked for deletion <<<<")
-                delete(os_cloud, stack.id)
+                age_hours = _stack_age_hours(stack)
+                if age_hours is None:
+                    log.warning(f"Skipping {stack.name}, could not determine its age.")
+                elif age_hours < min_age_hours:
+                    log.debug(f"        Skipping, only {age_hours:.1f}h old (< {min_age_hours}h)")
+                else:
+                    log.debug("        >>>> Marked for deletion <<<<")
+                    delete(os_cloud, stack.id)
 
         else:
             continue

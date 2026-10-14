@@ -3,6 +3,7 @@
 """Tests for OpenStack stack operations."""
 
 import logging
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -45,9 +46,15 @@ def test_cost_exits_non_zero_when_enumeration_fails(mock_connect, capsys, caplog
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
-def _heat_stack(stack_id: str, name: str, status: str) -> Stack:
+def _heat_stack(stack_id: str, name: str, status: str, age_hours: float = 48) -> Stack:
     """Build a Stack as openstacksdk returns it from the Heat API."""
-    return Stack.existing(id=stack_id, stack_name=name, stack_status=status)
+    created = datetime.now(UTC) - timedelta(hours=age_hours)
+    return Stack.existing(
+        id=stack_id,
+        stack_name=name,
+        stack_status=status,
+        creation_time=created.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
 
 
 @patch("lftools_uv.openstack.stack.delete")
@@ -91,6 +98,51 @@ def test_delete_stale_with_no_stacks_exits_cleanly(mock_from_config, mock_delete
         os_stack.delete_stale("test-cloud", ["https://jenkins.example.org/releng"])
 
     assert exc_info.value.code == 0
+    mock_delete.assert_not_called()
+
+
+@patch("lftools_uv.openstack.stack.delete")
+@patch("lftools_uv.openstack.stack.Jenkins")
+@patch("lftools_uv.openstack.stack.openstack.connection.from_config")
+def test_delete_stale_protects_young_stacks(mock_from_config, mock_jenkins, mock_delete):
+    """A stack younger than min_age_hours is never reaped.
+
+    python-jenkins' get_running_builds() walks the node list and silently
+    skips any node that returns HTTP 500 or that disappears mid-query, both
+    routine with ephemeral cloud agents. The resulting short build list makes
+    live stacks look orphaned, so age alone has to veto the deletion.
+    """
+    mock_cloud = MagicMock()
+    mock_from_config.return_value = mock_cloud
+    mock_cloud.search_stacks.return_value = [
+        _heat_stack("id-young", "releng-csit-job-99", "CREATE_COMPLETE", age_hours=1),
+        _heat_stack("id-old", "releng-csit-job-98", "CREATE_COMPLETE", age_hours=48),
+    ]
+    jenkins = mock_jenkins.return_value
+    jenkins.url = "https://jenkins.example.org/releng/"
+    jenkins.server.get_running_builds.return_value = []
+
+    os_stack.delete_stale("test-cloud", ["https://jenkins.example.org/releng"])
+
+    assert [c.args for c in mock_delete.call_args_list] == [("test-cloud", "id-old")]
+
+
+@patch("lftools_uv.openstack.stack.delete")
+@patch("lftools_uv.openstack.stack.Jenkins")
+@patch("lftools_uv.openstack.stack.openstack.connection.from_config")
+def test_delete_stale_skips_stacks_of_unknown_age(mock_from_config, mock_jenkins, mock_delete):
+    """A stack whose creation time cannot be parsed is left alone."""
+    mock_cloud = MagicMock()
+    mock_from_config.return_value = mock_cloud
+    mock_cloud.search_stacks.return_value = [
+        Stack.existing(id="id-noage", stack_name="releng-csit-job-99", stack_status="CREATE_COMPLETE"),
+    ]
+    jenkins = mock_jenkins.return_value
+    jenkins.url = "https://jenkins.example.org/releng/"
+    jenkins.server.get_running_builds.return_value = []
+
+    os_stack.delete_stale("test-cloud", ["https://jenkins.example.org/releng"])
+
     mock_delete.assert_not_called()
 
 

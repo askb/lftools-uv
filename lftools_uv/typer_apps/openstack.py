@@ -187,6 +187,11 @@ def stack_cost(
 @stack_app.command("delete-stale")
 def stack_delete_stale(
     jenkins_urls: list[str] = typer.Argument(..., help="Jenkins URLs"),
+    min_age_hours: int = typer.Option(
+        os_stack.STALE_MIN_AGE_HOURS,
+        "--min-age-hours",
+        help="Protect stacks younger than this many hours from deletion.",
+    ),
 ) -> None:
     """Delete stale stacks.
 
@@ -194,7 +199,7 @@ def stack_delete_stale(
     both places. If a stack is no longer available in Jenkins but is in
     OpenStack then it is considered stale. Stale stacks are then deleted.
     """
-    os_stack.delete_stale(state.os_cloud, jenkins_urls)
+    os_stack.delete_stale(state.os_cloud, jenkins_urls, min_age_hours=min_age_hours)
 
 
 # Volume commands
