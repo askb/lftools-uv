@@ -92,3 +92,40 @@ def test_delete_stale_with_no_stacks_exits_cleanly(mock_from_config, mock_delete
 
     assert exc_info.value.code == 0
     mock_delete.assert_not_called()
+
+
+@patch("lftools_uv.openstack.stack.delete", return_value=True)
+@patch("lftools_uv.openstack.stack.time.sleep")
+@patch("lftools_uv.openstack.stack.openstack.connection.from_config")
+def test_create_exits_non_zero_when_all_tries_fail(mock_from_config, mock_sleep, mock_delete):
+    """Exhausting every try must fail the command, not return quietly.
+
+    create() tracked the outcome in a local it never acted on, so a build
+    whose stack never came up saw a zero exit and carried on to copy SSH keys
+    to hosts that do not exist, burning the whole job timeout before dying
+    somewhere unrelated to the real cause.
+    """
+    mock_cloud = MagicMock()
+    mock_from_config.return_value = mock_cloud
+    mock_cloud.create_stack.return_value = _heat_stack("id-1", "a-stack", "CREATE_IN_PROGRESS")
+    mock_cloud.get_stack.return_value = _heat_stack("id-1", "a-stack", "CREATE_FAILED")
+
+    with pytest.raises(SystemExit) as exc_info:
+        os_stack.create("test-cloud", "a-stack", "template.yaml", "params.yaml", timeout=1, tries=2)
+
+    assert exc_info.value.code == 1
+    assert mock_cloud.create_stack.call_count == 2
+
+
+@patch("lftools_uv.openstack.stack.time.sleep")
+@patch("lftools_uv.openstack.stack.openstack.connection.from_config")
+def test_create_returns_without_exit_on_success(mock_from_config, mock_sleep):
+    """A stack reaching CREATE_COMPLETE returns normally."""
+    mock_cloud = MagicMock()
+    mock_from_config.return_value = mock_cloud
+    mock_cloud.create_stack.return_value = _heat_stack("id-1", "a-stack", "CREATE_IN_PROGRESS")
+    mock_cloud.get_stack.return_value = _heat_stack("id-1", "a-stack", "CREATE_COMPLETE")
+
+    os_stack.create("test-cloud", "a-stack", "template.yaml", "params.yaml", timeout=1, tries=2)
+
+    assert mock_cloud.create_stack.call_count == 1

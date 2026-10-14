@@ -87,6 +87,10 @@ def create(
     cloud.pprint(stack)
     echo("------------------------------------")
 
+    if not stack_success:
+        log.error("Failed to create stack %s after %d tries.", name, tries)
+        sys.exit(1)
+
 
 def cost(os_cloud: str, stack_name: str, timeout: int = 60) -> None:
     """Get current cost info for the stack.
