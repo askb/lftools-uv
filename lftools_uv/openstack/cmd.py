@@ -210,7 +210,7 @@ def cost(ctx, stack_name, timeout):
 @click.argument("jenkins_urls", nargs=-1)
 @click.option(
     "--min-age-hours",
-    type=int,
+    type=click.IntRange(min=0),
     default=os_stack.STALE_MIN_AGE_HOURS,
     show_default=True,
     help="Protect stacks younger than this many hours from deletion.",

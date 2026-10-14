@@ -131,11 +131,22 @@ def test_delete_stale_protects_young_stacks(mock_from_config, mock_jenkins, mock
 @patch("lftools_uv.openstack.stack.Jenkins")
 @patch("lftools_uv.openstack.stack.openstack.connection.from_config")
 def test_delete_stale_skips_stacks_of_unknown_age(mock_from_config, mock_jenkins, mock_delete):
-    """A stack whose creation time cannot be parsed is left alone."""
+    """A stack whose creation time cannot be determined is left alone.
+
+    Covers both reasons an age is unknown: Heat omitted the field entirely,
+    and Heat returned a timestamp that will not parse. Either way the stack
+    could belong to a running build, so the fail-safe is to keep it.
+    """
     mock_cloud = MagicMock()
     mock_from_config.return_value = mock_cloud
     mock_cloud.search_stacks.return_value = [
         Stack.existing(id="id-noage", stack_name="releng-csit-job-99", stack_status="CREATE_COMPLETE"),
+        Stack.existing(
+            id="id-badage",
+            stack_name="releng-csit-job-98",
+            stack_status="CREATE_COMPLETE",
+            creation_time="not-a-timestamp",
+        ),
     ]
     jenkins = mock_jenkins.return_value
     jenkins.url = "https://jenkins.example.org/releng/"

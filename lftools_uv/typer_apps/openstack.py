@@ -190,6 +190,7 @@ def stack_delete_stale(
     min_age_hours: int = typer.Option(
         os_stack.STALE_MIN_AGE_HOURS,
         "--min-age-hours",
+        min=0,
         help="Protect stacks younger than this many hours from deletion.",
     ),
 ) -> None:
