@@ -157,6 +157,32 @@ def test_delete_stale_skips_stacks_of_unknown_age(mock_from_config, mock_jenkins
     mock_delete.assert_not_called()
 
 
+@patch("lftools_uv.openstack.stack.delete")
+@patch("lftools_uv.openstack.stack.Jenkins")
+@patch("lftools_uv.openstack.stack.openstack.connection.from_config")
+def test_delete_stale_honours_custom_min_age(mock_from_config, mock_jenkins, mock_delete):
+    """The caller-supplied threshold decides, not the module default.
+
+    The stack sits between the custom threshold and the default, so a
+    regression that ignored the argument and compared against
+    STALE_MIN_AGE_HOURS would keep it and go unnoticed.
+    """
+    mock_cloud = MagicMock()
+    mock_from_config.return_value = mock_cloud
+    mock_cloud.search_stacks.return_value = [
+        _heat_stack("id-12h", "releng-csit-job-99", "CREATE_COMPLETE", age_hours=12),
+    ]
+    jenkins = mock_jenkins.return_value
+    jenkins.url = "https://jenkins.example.org/releng/"
+    jenkins.server.get_running_builds.return_value = []
+
+    os_stack.delete_stale("test-cloud", ["https://jenkins.example.org/releng"])
+    mock_delete.assert_not_called()  # 12h < default 24h
+
+    os_stack.delete_stale("test-cloud", ["https://jenkins.example.org/releng"], min_age_hours=6)
+    assert [c.args for c in mock_delete.call_args_list] == [("test-cloud", "id-12h")]
+
+
 @patch("lftools_uv.openstack.stack.delete", return_value=True)
 @patch("lftools_uv.openstack.stack.time.sleep")
 @patch("lftools_uv.openstack.stack.openstack.connection.from_config")
